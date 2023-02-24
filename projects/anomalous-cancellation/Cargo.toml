@@ -1,16 +1,17 @@
 [package]
-name = "sub_projects"
-publish = false
+name = "anomalous-cancellation"
 version = "0.0.0"
 authors = ["Aster <192607617@qq.com>"]
 description = "..."
 repository = "https://github.com/oovm/sub_projects"
-documentation = "https://docs.rs/sub_projects"
+documentation = "https://docs.rs/anomalous-cancellation"
 readme = "Readme.md"
 license = "MPL-2.0"
 edition = "2021"
 
 [dependencies]
+dashu = "0.3.1"
+itertools = "0.10.5"
 
 [dev-dependencies]
 
