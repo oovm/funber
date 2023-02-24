@@ -10,9 +10,11 @@ license = "MPL-2.0"
 edition = "2021"
 
 [dependencies]
-dashu = "0.3.1"
+dashu = { version = "0.3.1", features = ["serde"] }
 itertools = "0.10.5"
 gen-iter = "0.3.0"
+serde = "1.0.152"
+serde_derive = "1.0.152"
 
 [dependencies.latexify]
 #version = "0.0.0"

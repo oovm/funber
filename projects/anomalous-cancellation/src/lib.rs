@@ -4,6 +4,8 @@
 use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter, Write},
+    fs::File,
+    io::Write as _,
     ops::Generator,
     str::FromStr,
 };
@@ -15,6 +17,7 @@ use dashu::{
 };
 use gen_iter::GenIter;
 use itertools::Itertools;
+use serde_derive::{Deserialize, Serialize};
 
 use latexify::Latexify;
 
@@ -29,54 +32,68 @@ pub fn collect_digits(number: &UBig) -> BTreeMap<char, usize> {
     digits
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CancellationPlan {
     numerator: UBig,
     denominator: UBig,
     numerator_rest: UBig,
     denominator_rest: UBig,
-    numerator_removes: Vec<bool>,
-    denominator_removes: Vec<bool>,
+    /// Numerator removed indexes
+    numerator_removed: Vec<usize>,
+    /// Denominator removed indexes
+    denominator_removed: Vec<usize>,
 }
 
 impl CancellationPlan {
     pub fn contains_zero(&self) -> bool {
         self.numerator.to_string().contains('0') || self.denominator.to_string().contains('0')
     }
+    pub fn tailing_zero(&self) -> bool {
+        self.numerator.to_string().ends_with('0') || self.denominator.to_string().ends_with('0')
+    }
 }
 
 fn digit_cancellation(numerator: &UBig, denominator: &UBig) -> Result<CancellationPlan, &'static str> {
-    let mut numerator_digits = numerator.to_string().chars().collect_vec();
-    let mut denominator_rest = String::new();
-    let mut numerator_removes = vec![];
-    let mut denominator_removes = vec![];
-    for (_, d) in denominator.to_string().chars().enumerate() {
-        match numerator_digits.iter().position(|&n| n == d) {
-            Some(idx_n) => {
-                numerator_removes.push(true);
-                denominator_removes.push(true);
-                numerator_digits.remove(idx_n);
+    // numerator [1, 6, 3]
+    // denominator [3?, 2?, 6?]
+    let mut n_digits = numerator.to_string().chars().enumerate().collect_vec();
+    let mut d_digits = denominator.to_string().chars().enumerate().collect_vec();
+    let mut n_removed = vec![];
+    let mut d_removed = vec![];
+
+    for (_, n) in n_digits.clone().iter() {
+        let d = match d_digits.iter().position(|(_, d)| n.eq(d)) {
+            Some(d_idx) => {
+                let rd = d_digits.remove(d_idx);
+                d_removed.push(rd.0);
+                rd.1
             }
-            None => {
-                numerator_removes.push(false);
-                denominator_removes.push(true);
-                denominator_rest.push(d);
+            None => continue,
+        };
+        match n_digits.iter().position(|(_, n)| d.eq(n)) {
+            Some(n_idx) => {
+                let rn = n_digits.remove(n_idx);
+                n_removed.push(rn.0);
             }
+            None => continue,
         }
     }
-    if numerator_digits.is_empty() || denominator_rest.is_empty() {
+
+    let mut n_rest = n_digits.iter().map(|(_, c)| c).collect::<String>();
+    let mut d_rest = d_digits.iter().map(|(_, c)| c).collect::<String>();
+    if n_rest.is_empty() || d_rest.is_empty() {
         Err("All digits are cancelled")?
     }
-    if numerator_removes.is_empty() && denominator_removes.is_empty() {
+    if n_removed.is_empty() && d_removed.is_empty() {
         Err("No digit is cancelled")?
     }
     Ok(CancellationPlan {
         numerator: numerator.clone(),
         denominator: denominator.clone(),
-        numerator_rest: UBig::from_str(&String::from_iter(numerator_digits)).unwrap(),
-        denominator_rest: UBig::from_str(&denominator_rest).unwrap(),
-        numerator_removes,
-        denominator_removes,
+        numerator_rest: UBig::from_str(&n_rest).unwrap(),
+        denominator_rest: UBig::from_str(&d_rest).unwrap(),
+        numerator_removed: n_removed,
+        denominator_removed: d_removed,
     })
 }
 
@@ -111,11 +128,8 @@ impl Latexify for CancellationPlan {
         W: Write,
     {
         f.write_str(r"\frac{")?;
-        let lhs = self.numerator.to_string().chars().zip()
-        let rhs = self.numerator_removes.iter()
-
         for (idx, c) in self.numerator.to_string().chars().enumerate() {
-            if self.numerator_removes.contains(&idx) {
+            if self.numerator_removed.contains(&idx) {
                 f.write_str(r"\color{red}{")?;
                 f.write_char(c)?;
                 f.write_str("}")?;
@@ -126,7 +140,7 @@ impl Latexify for CancellationPlan {
         }
         f.write_str("}{")?;
         for (idx, c) in self.denominator.to_string().chars().enumerate() {
-            if self.denominator_removes.contains(&idx) {
+            if self.denominator_removed.contains(&idx) {
                 f.write_str(r"\color{red}{")?;
                 f.write_char(c)?;
                 f.write_str("}")?;
@@ -158,16 +172,21 @@ fn find_in(numerator: usize, denominator: usize, start: &UBig) -> impl Iterator<
     })
 }
 
-// \frac{1\enclose{updiagonalstrike}[mathcolor="red"]{\color{black}{2}}3}{456}
-#[test]
-fn test() {
-    for i in find_in(1, 2, &UBig::ONE).filter(|r| !r.contains_zero()).take(10) {
-        println!("{}", i.to_latex());
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Runner {
+    numerator: usize,
+    denominator: usize,
+    current: UBig,
+    collection: Vec<CancellationPlan>,
+}
+
+pub fn debug_latex(numerator: usize, denominator: usize, limit: usize) -> String {
+    let mut latex = format!("### {}/{}\n", numerator, denominator);
+    latex.push_str("$$\\begin{aligned}\n");
+    for i in find_in(numerator, denominator, &UBig::ONE).filter(|r| !r.contains_zero()).take(limit) {
+        i.latexify(&mut latex).unwrap();
+        write!(latex, "&=\\frac{{{}}}{{{}}}\\\\\n", numerator, denominator).unwrap();
     }
-    for i in find_in(1, 3, &UBig::ONE).filter(|r| !r.contains_zero()).take(10) {
-        println!("{}", i.to_latex());
-    }
-    for i in find_in(1, 4, &UBig::ONE).filter(|r| !r.contains_zero()).take(10) {
-        println!("{}", i.to_latex());
-    }
+    latex.push_str("\\end{aligned}$$\n\n");
+    latex
 }
