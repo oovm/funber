@@ -13,7 +13,10 @@ edition = "2021"
 dashu = "0.3.1"
 itertools = "0.10.5"
 gen-iter = "0.3.0"
-latexify = "0.0.0"
+
+[dependencies.latexify]
+#version = "0.0.0"
+path = "../latexify"
 
 [dev-dependencies]
 

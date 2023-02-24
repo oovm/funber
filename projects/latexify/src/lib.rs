@@ -1,7 +1,13 @@
-mod for_std;
-mod for_3rd;
+use core::fmt::{Debug, Write};
 
+mod for_3rd;
+mod for_std;
 
 pub trait Latexify {
-    fn latexify(&mut self, f: std::fmt::Formatter) -> std::fmt::Result;
+    fn latexify<W: Write>(&self, f: &mut W) -> core::fmt::Result;
+    fn to_latex(&self) -> String {
+        let mut s = String::new();
+        self.latexify(&mut s).unwrap();
+        s
+    }
 }
