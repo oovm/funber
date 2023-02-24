@@ -1,19 +1,15 @@
 [package]
-name = "anomalous-cancellation"
+name = "latexify"
 version = "0.0.0"
 authors = ["Aster <192607617@qq.com>"]
-description = "..."
+description = "Shared definition for turn a rust object into latex code"
 repository = "https://github.com/oovm/sub_projects"
-documentation = "https://docs.rs/anomalous-cancellation"
+documentation = "https://docs.rs/latexify"
 readme = "Readme.md"
 license = "MPL-2.0"
 edition = "2021"
 
 [dependencies]
-dashu = "0.3.1"
-itertools = "0.10.5"
-gen-iter = "0.3.0"
-latexify = "0.0.0"
 
 [dev-dependencies]
 

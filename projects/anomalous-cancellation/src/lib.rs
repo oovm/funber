@@ -2,15 +2,16 @@
 #![feature(generator_trait)]
 
 use std::collections::BTreeMap;
-use std::fmt::Binary;
-use std::ops::GeneratorState;
-use std::pin::Pin;
+use std::fmt::{Display, Formatter};
+use std::ops::Generator;
 use std::str::FromStr;
-use gen_iter::gen_iter;
+
 use dashu::base::UnsignedAbs;
 use dashu::integer::{IBig, UBig};
 use dashu::rational::RBig;
+use gen_iter::GenIter;
 use itertools::Itertools;
+use latexify::Latexify;
 
 mod errors;
 
@@ -26,12 +27,20 @@ pub fn collect_digits(number: &UBig) -> BTreeMap<char, usize> {
 
 #[derive(Debug)]
 pub struct CancellationPlan {
+    numerator: UBig,
+    denominator: UBig,
     numerator_rest: UBig,
     denominator_rest: UBig,
     /// Numerator removed indexes
     numerator_removed: Vec<usize>,
     /// Denominator removed indexes
     denominator_removed: Vec<usize>,
+}
+
+impl CancellationPlan {
+    pub fn contains_zero(&self) -> bool {
+        self.numerator.to_string().contains('0') || self.denominator.to_string().contains('0')
+    }
 }
 
 fn digit_cancellation(numerator: &UBig, denominator: &UBig) -> Result<CancellationPlan, &'static str>
@@ -59,11 +68,19 @@ fn digit_cancellation(numerator: &UBig, denominator: &UBig) -> Result<Cancellati
         Err("No digit is cancelled")?
     }
     Ok(CancellationPlan {
+        numerator: numerator.clone(),
+        denominator: denominator.clone(),
         numerator_rest: UBig::from_str(&String::from_iter(numerator_digits)).unwrap(),
         denominator_rest: UBig::from_str(&denominator_rest).unwrap(),
         numerator_removed,
         denominator_removed,
     })
+}
+
+impl Display for CancellationPlan {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.numerator, self.denominator)
+    }
 }
 
 impl CancellationPlan {
@@ -85,11 +102,21 @@ impl PartialEq<RBig> for CancellationPlan {
     }
 }
 
+impl Latexify for CancellationPlan {
+    type Context = ();
 
-fn find_in(numerator: usize, denominator: usize) -> Option<CancellationPlan> {
-    let mut times = UBig::ONE;
-    let mut generator = || {
-        for _ in 0..10 {
+    fn latexify(&self) -> String {
+        let mut out = String::new();
+
+    }
+}
+
+
+// latexify
+fn find_in(numerator: usize, denominator: usize, start: &UBig) -> impl Iterator<Item=CancellationPlan> {
+    let mut times = start.clone();
+    GenIter(move || {
+        loop {
             let num = UBig::from(numerator) * times.clone();
             let den = UBig::from(denominator) * times.clone();
             let r = RBig::from_parts(IBig::from(&num), den.clone());
@@ -99,18 +126,21 @@ fn find_in(numerator: usize, denominator: usize) -> Option<CancellationPlan> {
                 }
                 _ => {}
             }
+            times += UBig::ONE;
         }
-    };
-
-    match Pin::new(&mut generator).resume(()) {
-        GeneratorState::Yielded(a) => {}
-        GeneratorState::Complete(b) => {}
-    }
-
-    unreachable!()
+    })
 }
 
+// \frac{1\enclose{updiagonalstrike}[mathcolor="red"]{\color{black}{2}}3}{456}
 #[test]
 fn test() {
-    println!("{:?}", find_in(1, 2))
+    for i in find_in(1, 2, &UBig::ONE).filter(|r| !r.contains_zero()).take(10) {
+        println!("{}", i);
+    }
+    for i in find_in(1, 3, &UBig::ONE).filter(|r| !r.contains_zero()).take(10) {
+        println!("{}", i);
+    }
+    for i in find_in(1, 4, &UBig::ONE).filter(|r| !r.contains_zero()).take(10) {
+        println!("{}", i);
+    }
 }
