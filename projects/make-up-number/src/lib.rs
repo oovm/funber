@@ -1,5 +1,6 @@
 #![feature(generators)]
 #![feature(generator_trait)]
+#![feature(box_syntax)]
 
 use std::{
     fmt::{Display, Write},
@@ -13,6 +14,7 @@ use dashu::{
     base::UnsignedAbs,
     rational::RBig,
 };
+use dashu::integer::{IBig, UBig};
 use itertools::Itertools;
 
 use latexify::Latexify;
@@ -21,6 +23,7 @@ mod errors;
 
 
 ///
+#[derive(Debug)]
 pub enum ExpressionTree {
     Atomic {
         number: RBig,
@@ -39,46 +42,73 @@ pub enum ExpressionTree {
     },
 }
 
-pub enum StopReason {}
+impl From<usize> for ExpressionTree {
+    fn from(value: usize) -> Self {
+        Self::Atomic {
+            number: RBig::from(value),
+        }
+    }
+}
 
-impl ExpressionTree{
-    pub fn is_atom(&self)
-
+#[derive(Debug)]
+pub enum StopReason {
+    NotInteger,
+    NonAtomicConcat,
 }
 
 impl ExpressionTree {
-    pub fn eval(self) -> Result<ExpressionTree, StopReason> {
-        match &self {
-            ExpressionTree::Atomic { .. } => {
-                Ok(self)
+    pub fn is_atom(&self) -> bool {
+        match self {
+            ExpressionTree::Atomic { .. } => true,
+            _ => false,
+        }
+    }
+    pub fn atomic_concat(&self) -> bool {
+        match self {
+            ExpressionTree::Atomic { .. } => { true }
+            ExpressionTree::Concat { lhs, rhs } => {
+                lhs.atomic_concat() && rhs.atomic_concat()
+            }
+            _ => false,
+        }
+    }
+}
+
+impl ExpressionTree {
+    pub fn eval(self) -> Result<IBig, StopReason> {
+        let (num, den) = self.eval_nest()?.into_parts();
+        if !den.is_one() {
+            Err(StopReason::NotInteger)
+        } else {
+            Ok(num)
+        }
+    }
+    fn eval_nest(self) -> Result<RBig, StopReason> {
+        match self {
+            ExpressionTree::Atomic { number } => {
+                Ok(number)
             }
             ExpressionTree::Add { lhs, rhs } => {
-                Ok(lhs.add(rhs))
+                Ok(lhs.eval_nest()?.add(rhs.eval_nest()?))
             }
             ExpressionTree::Mul { lhs, rhs } => {
-                Ok(lhs.mul(rhs))
+                Ok(lhs.eval_nest()?.mul(rhs.eval_nest()?))
             }
             ExpressionTree::Concat { lhs, rhs } => {
-                lhs.mul(10).add(rhs)
+                Ok(lhs.eval_nest()?.mul(UBig::from(10usize)).add(rhs.eval_nest()?))
             }
         }
     }
 }
 
-
-impl<'a> Add<&'a Self> for ExpressionTree {
-    type Output = Self;
-
-    fn add(self, rhs: &'a Self) -> Self::Output {
-
-    }
+#[test]
+fn test() {
+    let add = ExpressionTree::Add {
+        lhs: box ExpressionTree::Concat {
+            lhs: Box::new(ExpressionTree::from(1)),
+            rhs: Box::new(ExpressionTree::from(2)),
+        },
+        rhs: Box::new(ExpressionTree::Atomic { number: RBig::from(1) }),
+    };
+    println!("{:#?}", add.eval().unwrap())
 }
-
-
-impl<'a> Mul<&'a Self> for ExpressionTree {
-    type Output = Self;
-
-    fn mul(self, rhs: &'a Self) -> Self::Output {}
-}
-
-
