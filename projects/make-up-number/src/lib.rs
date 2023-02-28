@@ -26,6 +26,8 @@ pub use crate::errors::StopReason;
 mod errors;
 mod pool;
 
+pub use crate::pool::{ExpressionPool, NodeID};
+
 ///
 #[derive(Debug, Clone, Hash)]
 pub enum ExpressionTree {
@@ -39,24 +41,12 @@ pub enum ExpressionTree {
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ExpressionNode {
-    Atomic { number: NodeID },
+    Atomic,
     Add { lhs: NodeID, rhs: NodeID },
     Sub { lhs: NodeID, rhs: NodeID },
     Mul { lhs: NodeID, rhs: NodeID },
     Div { lhs: NodeID, rhs: NodeID },
     Concat { lhs: NodeID, rhs: NodeID },
-}
-
-#[derive(Default, Debug)]
-pub struct ExpressionPool {
-    cache: AHashMap<NodeID, EvaluatedState>,
-}
-
-impl EvaluatedState {
-    pub fn initial(number: usize) -> (NodeID, EvaluatedState) {
-        let node = ExpressionNode::from(number).get_id();
-        (node, EvaluatedState::Initial(RBig::from(number)))
-    }
 }
 
 impl ExpressionNode {
@@ -68,54 +58,13 @@ impl ExpressionNode {
     }
 }
 
-impl From<usize> for ExpressionNode {
-    fn from(value: usize) -> Self {
-        let mut hasher = AHasher::default();
-        value.hash(&mut hasher);
-        Self::Atomic { number: hasher.finish() as usize }
-    }
-}
-
-impl ExpressionPool {
-    pub fn evaluate(&mut self, node: ExpressionNode) {
-        match node {
-            ExpressionNode::Atomic { number } => {}
-            ExpressionNode::Add { lhs, rhs } => {
-                let lhs = self.find(lhs);
-                let rhs = self.find(rhs);
-            }
-            ExpressionNode::Sub { lhs, rhs } => {}
-            ExpressionNode::Mul { lhs, rhs } => {}
-            ExpressionNode::Div { lhs, rhs } => {}
-            ExpressionNode::Concat { lhs, rhs } => {}
-        }
-    }
-    pub fn initial(&mut self, value: usize) {
-        let out = EvaluatedState::initial(value);
-        self.cache.insert(out.0, out.1);
-    }
-    pub fn find(&self, node: NodeID) -> &EvaluatedState {
-        match self.cache.get(&node) {
-            Some(s) => s,
-            None => &EvaluatedState::Failure(StopReason::NotFound),
-        }
-    }
-    pub fn rewrite(&self, node: NodeID) {
-        match self.find(node) {
-            EvaluatedState::Unevaluated => {}
-            EvaluatedState::Initial(_) => {}
-            EvaluatedState::Success(_) => {}
-            EvaluatedState::Failure(_) => {}
-        }
-    }
-}
-#[test]
-fn debug() {
-    let mut pool = ExpressionPool::default();
-    pool.initial(1);
-    pool.initial(2);
-    println!("{:?}", pool);
-}
+// impl From<usize> for ExpressionNode {
+//     fn from(value: usize) -> Self {
+//         let mut hasher = AHasher::default();
+//         value.hash(&mut hasher);
+//         Self::Atomic { number: hasher.finish() as usize }
+//     }
+// }
 
 impl ExpressionTree {
     pub fn is_atom(&self) -> bool {
