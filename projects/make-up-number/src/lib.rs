@@ -8,7 +8,8 @@ use std::{
     ops::Generator,
     str::FromStr,
 };
-use std::ops::{Add, Mul};
+use std::ops::{Add, Div, Mul, Sub};
+use std::rc::Rc;
 
 use dashu::{
     base::UnsignedAbs,
@@ -23,22 +24,30 @@ mod errors;
 
 
 ///
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExpressionTree {
     Atomic {
         number: RBig,
     },
     Add {
-        lhs: Box<ExpressionTree>,
-        rhs: Box<ExpressionTree>,
+        lhs: Rc<ExpressionTree>,
+        rhs: Rc<ExpressionTree>,
+    },
+    Sub {
+        lhs: Rc<ExpressionTree>,
+        rhs: Rc<ExpressionTree>,
     },
     Mul {
-        lhs: Box<ExpressionTree>,
-        rhs: Box<ExpressionTree>,
+        lhs: Rc<ExpressionTree>,
+        rhs: Rc<ExpressionTree>,
+    },
+    Div {
+        lhs: Rc<ExpressionTree>,
+        rhs: Rc<ExpressionTree>,
     },
     Concat {
-        lhs: Box<ExpressionTree>,
-        rhs: Box<ExpressionTree>,
+        lhs: Rc<ExpressionTree>,
+        rhs: Rc<ExpressionTree>,
     },
 }
 
@@ -91,24 +100,62 @@ impl ExpressionTree {
             ExpressionTree::Add { lhs, rhs } => {
                 Ok(lhs.eval_nest()?.add(rhs.eval_nest()?))
             }
+            ExpressionTree::Sub { lhs, rhs } => {
+                Ok(lhs.eval_nest()?.sub(rhs.eval_nest()?))
+            }
             ExpressionTree::Mul { lhs, rhs } => {
                 Ok(lhs.eval_nest()?.mul(rhs.eval_nest()?))
             }
+            ExpressionTree::Div { lhs, rhs } => {
+                Ok(lhs.eval_nest()?.div(rhs.eval_nest()?))
+            }
             ExpressionTree::Concat { lhs, rhs } => {
-                Ok(lhs.eval_nest()?.mul(UBig::from(10usize)).add(rhs.eval_nest()?))
+                if lhs.atomic_concat() && rhs.atomic_concat() {
+                    Ok(lhs.eval_nest()?.mul(UBig::from(10usize)).add(rhs.eval_nest()?))
+                } else {
+                    Err(StopReason::NonAtomicConcat)
+                }
             }
         }
     }
 }
 
+pub fn build_add(lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree>, trees: &mut Vec<ExpressionTree>) {
+    trees.push(ExpressionTree::Add {
+        lhs: Rc::new(self.clone()),
+        rhs: Rc::new(rhs.clone()),
+    });
+    trees.push(ExpressionTree::Sub {
+        lhs: Rc::new(self.clone()),
+        rhs: Rc::new(rhs.clone()),
+    })
+}
+pub fn build_mul(lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree>, trees: &mut Vec<ExpressionTree>) {
+    trees.push(ExpressionTree::Mul {
+        lhs: Rc::new(self.clone()),
+        rhs: Rc::new(rhs.clone()),
+    });
+    trees.push(ExpressionTree::Div {
+        lhs: Rc::new(self.clone()),
+        rhs: Rc::new(rhs.clone()),
+    })
+}
+pub fn build_concat(lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree>, trees: &mut Vec<ExpressionTree>) {
+    trees.push(ExpressionTree::Concat {
+        lhs: self.clone(),
+        rhs: rhs.clone(),
+    })
+}
+
+
 #[test]
 fn test() {
-    let add = ExpressionTree::Add {
-        lhs: box ExpressionTree::Concat {
-            lhs: Box::new(ExpressionTree::from(1)),
-            rhs: Box::new(ExpressionTree::from(2)),
-        },
-        rhs: Box::new(ExpressionTree::Atomic { number: RBig::from(1) }),
-    };
-    println!("{:#?}", add.eval().unwrap())
+    let mut expressions = vec![];
+    let lhs = ExpressionTree::from(1);
+    let rhs = ExpressionTree::from(2);
+    lhs.build_add(&rhs, &mut expressions);
+    lhs.build_concat(&rhs, &mut expressions);
+    for expr in expressions {
+        println!("{:?} => {:#?}", expr, expr.clone().eval().unwrap())
+    }
 }
