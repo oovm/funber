@@ -41,12 +41,21 @@ pub enum ExpressionTree {
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ExpressionNode {
-    Atomic,
+    Atomic { number: NodeID },
     Add { lhs: NodeID, rhs: NodeID },
     Sub { lhs: NodeID, rhs: NodeID },
     Mul { lhs: NodeID, rhs: NodeID },
     Div { lhs: NodeID, rhs: NodeID },
     Concat { lhs: NodeID, rhs: NodeID },
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum ExpressionAction {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Concat,
 }
 
 impl ExpressionNode {

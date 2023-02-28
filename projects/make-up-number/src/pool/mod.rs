@@ -1,6 +1,10 @@
-use std::ops::{Add, Div, Mul, Sub};
+use std::{
+    fmt::{Debug, Formatter, Write},
+    ops::{Add, Div, Mul, Sub},
+};
 
-use ahash::AHashMap;
+use ahash::RandomState;
+use dashmap::DashMap;
 use dashu::rational::RBig;
 
 use crate::{ExpressionNode, StopReason};
@@ -9,10 +13,10 @@ pub type NodeID = usize;
 
 #[derive(Default, Debug)]
 pub struct ExpressionPool {
-    cache: AHashMap<NodeID, EvaluatedState>,
+    cache: DashMap<NodeID, EvaluatedState, RandomState>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EvaluatedState {
     is_initial: bool,
     is_evaluated: bool,
@@ -21,12 +25,24 @@ pub struct EvaluatedState {
     failure: Option<StopReason>,
 }
 
+impl Debug for EvaluatedState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self.failure {
+            Some(s) => f.debug_struct("EvaluateFailure").field("reason", &s).finish(),
+            None if self.is_evaluated => {
+                f.debug_struct("EvaluateSuccess").field("expression", &self.expression).field("result", &self.result).finish()
+            }
+            None => f.debug_struct("EvaluatePending").field("expression", &self.expression).finish(),
+        }
+    }
+}
+
 impl EvaluatedState {
     pub fn initial(number: usize) -> EvaluatedState {
         Self {
             is_initial: true,
             is_evaluated: true,
-            expression: ExpressionNode::Atomic,
+            expression: ExpressionNode::Atomic { number },
             result: RBig::from(number),
             failure: None,
         }
@@ -38,61 +54,82 @@ impl EvaluatedState {
 
 impl ExpressionPool {
     pub fn evaluate(&mut self, node: &NodeID) -> Result<RBig, StopReason> {
-        let mut node = self.find(*node)?;
-        let out = if node.is_evaluated {
-            node.result.clone()
+        let mut node = self.find(node)?;
+        if node.is_evaluated {
+            return Ok(node.result.clone());
         }
-        else {
-            match self.try_evaluate(node) {
-                Ok(o) => o,
-                Err(e) => {}
-            }
-        };
-        Ok(out)
+        match self.try_evaluate(&node) {
+            Ok(o) => Ok(self.update_success(node, o)),
+            Err(e) => Err(self.update_failure(node, e)),
+        }
     }
-    fn try_evaluate(&mut self, mut node: EvaluatedState) -> Result<RBig, StopReason> {
-        match &node.expression {
-            ExpressionNode::Atomic => unreachable!("All atomic nodes should be evaluated"),
+    fn try_evaluate(&mut self, node: &EvaluatedState) -> Result<RBig, StopReason> {
+        let out = match &node.expression {
+            ExpressionNode::Atomic { .. } => unreachable!("All atomic nodes should be evaluated"),
             ExpressionNode::Add { lhs, rhs } => {
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
-                self.insert(node, lhs.add(rhs))
+                lhs.add(rhs)
             }
             ExpressionNode::Sub { lhs, rhs } => {
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
-                self.insert(node, lhs.sub(rhs))
+                lhs.sub(rhs)
             }
             ExpressionNode::Mul { lhs, rhs } => {
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
-                self.insert(node, lhs.mul(rhs))
+                lhs.mul(rhs)
             }
             ExpressionNode::Div { lhs, rhs } => {
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
-                self.insert(node, lhs.div(rhs))
+                if rhs.is_zero() {
+                    return Err(StopReason::DividedByZero);
+                }
+                lhs.div(rhs)
             }
             ExpressionNode::Concat { lhs, rhs } => {
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
-                self.insert(node, lhs.mul(RBig::from(10)).add(rhs))
+                lhs.mul(RBig::from(10)).add(rhs)
             }
-        }
+        };
         Ok(out)
     }
-    pub fn initial(&mut self, value: usize) {
+    pub fn initial(&mut self, value: usize) -> NodeID {
         let out = EvaluatedState::initial(value);
-        self.cache.insert(out.get_node_id(), out);
+        let id = out.get_node_id();
+        self.cache.insert(id, out);
+        id
     }
-    pub fn insert(&mut self, mut state: EvaluatedState, result: RBig) -> RBig {
+    pub fn expression(&mut self, node: ExpressionNode) -> NodeID {
+        let out = EvaluatedState {
+            //
+            is_initial: false,
+            is_evaluated: false,
+            expression: node,
+            result: RBig::default(),
+            failure: None,
+        };
+        let id = out.get_node_id();
+        self.cache.insert(id, out);
+        id
+    }
+    pub fn update_success(&mut self, mut state: EvaluatedState, result: RBig) -> RBig {
         state.is_evaluated = true;
         state.result = result.clone();
         self.cache.insert(state.get_node_id(), state);
         result
     }
-    pub fn find(&self, node: NodeID) -> Result<EvaluatedState, StopReason> {
-        match self.cache.get(&node) {
+    pub fn update_failure(&mut self, mut state: EvaluatedState, reason: StopReason) -> StopReason {
+        state.is_evaluated = true;
+        state.failure = Some(reason.clone());
+        self.cache.insert(state.get_node_id(), state);
+        reason
+    }
+    pub fn find(&self, node: &NodeID) -> Result<EvaluatedState, StopReason> {
+        match self.cache.get(node) {
             Some(s) => match &s.failure {
                 Some(s) => Err(s.clone()),
                 None => Ok(s.clone()),
@@ -100,15 +137,49 @@ impl ExpressionPool {
             None => Err(StopReason::NotFound),
         }
     }
-    pub fn rewrite(&self, node: NodeID) -> Result<(), StopReason> {
-        todo!()
+    pub fn rewrite<W: Write>(&self, node: &NodeID, w: &mut W) -> Result<(), StopReason> {
+        let node = self.cache.get(node).ok_or(StopReason::NotFound)?;
+        match node.expression {
+            ExpressionNode::Atomic { number } => {
+                write!(w, "{}", number)?;
+            }
+            ExpressionNode::Add { lhs, rhs } => {
+                self.rewrite(&lhs, w)?;
+                write!(w, " + ")?;
+                self.rewrite(&rhs, w)?;
+            }
+            ExpressionNode::Sub { lhs, rhs } => {
+                self.rewrite(&lhs, w)?;
+                write!(w, " - ")?;
+                self.rewrite(&rhs, w)?;
+            }
+            ExpressionNode::Mul { lhs, rhs } => {
+                self.rewrite(&lhs, w)?;
+                write!(w, " * ")?;
+                self.rewrite(&rhs, w)?;
+            }
+            ExpressionNode::Div { lhs, rhs } => {
+                self.rewrite(&lhs, w)?;
+                write!(w, " / ")?;
+                self.rewrite(&rhs, w)?;
+            }
+            ExpressionNode::Concat { lhs, rhs } => {
+                self.rewrite(&lhs, w)?;
+                self.rewrite(&rhs, w)?;
+            }
+        }
+        Ok(())
     }
 }
 
 #[test]
 fn debug() {
     let mut pool = ExpressionPool::default();
-    pool.initial(1);
-    pool.initial(2);
-    println!("{:?}", pool);
+    let lhs = pool.initial(1);
+    let rhs = pool.initial(2);
+    let id = pool.expression(ExpressionNode::Add { lhs, rhs });
+    let mut expression = String::new();
+    pool.rewrite(&id, &mut expression).unwrap();
+    println!("{:#?}", pool.evaluate(&id));
+    println!("{:#?}", expression);
 }
