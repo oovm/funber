@@ -4,65 +4,117 @@
 
 use std::{
     fmt::{Display, Write},
+    hash::{Hash, Hasher},
     io::Write as _,
-    ops::Generator,
+    ops::{Add, Div, Generator, Mul, Sub},
+    rc::Rc,
     str::FromStr,
 };
-use std::ops::{Add, Div, Mul, Sub};
-use std::rc::Rc;
 
+use ahash::{AHashMap, AHasher};
 use dashu::{
     base::UnsignedAbs,
+    integer::{IBig, UBig},
     rational::RBig,
 };
-use dashu::integer::{IBig, UBig};
 use itertools::Itertools;
 
 use latexify::Latexify;
 
-mod errors;
+pub use crate::errors::StopReason;
 
+mod errors;
+mod pool;
 
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub enum ExpressionTree {
-    Atomic {
-        number: RBig,
-    },
-    Add {
-        lhs: Rc<ExpressionTree>,
-        rhs: Rc<ExpressionTree>,
-    },
-    Sub {
-        lhs: Rc<ExpressionTree>,
-        rhs: Rc<ExpressionTree>,
-    },
-    Mul {
-        lhs: Rc<ExpressionTree>,
-        rhs: Rc<ExpressionTree>,
-    },
-    Div {
-        lhs: Rc<ExpressionTree>,
-        rhs: Rc<ExpressionTree>,
-    },
-    Concat {
-        lhs: Rc<ExpressionTree>,
-        rhs: Rc<ExpressionTree>,
-    },
+    Atomic { number: RBig },
+    Add { lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree> },
+    Sub { lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree> },
+    Mul { lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree> },
+    Div { lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree> },
+    Concat { lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree> },
 }
 
-impl From<usize> for ExpressionTree {
-    fn from(value: usize) -> Self {
-        Self::Atomic {
-            number: RBig::from(value),
-        }
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum ExpressionNode {
+    Atomic { number: NodeID },
+    Add { lhs: NodeID, rhs: NodeID },
+    Sub { lhs: NodeID, rhs: NodeID },
+    Mul { lhs: NodeID, rhs: NodeID },
+    Div { lhs: NodeID, rhs: NodeID },
+    Concat { lhs: NodeID, rhs: NodeID },
+}
+
+#[derive(Default, Debug)]
+pub struct ExpressionPool {
+    cache: AHashMap<NodeID, EvaluatedState>,
+}
+
+impl EvaluatedState {
+    pub fn initial(number: usize) -> (NodeID, EvaluatedState) {
+        let node = ExpressionNode::from(number).get_id();
+        (node, EvaluatedState::Initial(RBig::from(number)))
     }
 }
 
-#[derive(Debug)]
-pub enum StopReason {
-    NotInteger,
-    NonAtomicConcat,
+impl ExpressionNode {
+    #[inline]
+    pub fn get_id(&self) -> NodeID {
+        let mut hasher = AHasher::default();
+        self.hash(&mut hasher);
+        hasher.finish() as usize
+    }
+}
+
+impl From<usize> for ExpressionNode {
+    fn from(value: usize) -> Self {
+        let mut hasher = AHasher::default();
+        value.hash(&mut hasher);
+        Self::Atomic { number: hasher.finish() as usize }
+    }
+}
+
+impl ExpressionPool {
+    pub fn evaluate(&mut self, node: ExpressionNode) {
+        match node {
+            ExpressionNode::Atomic { number } => {}
+            ExpressionNode::Add { lhs, rhs } => {
+                let lhs = self.find(lhs);
+                let rhs = self.find(rhs);
+            }
+            ExpressionNode::Sub { lhs, rhs } => {}
+            ExpressionNode::Mul { lhs, rhs } => {}
+            ExpressionNode::Div { lhs, rhs } => {}
+            ExpressionNode::Concat { lhs, rhs } => {}
+        }
+    }
+    pub fn initial(&mut self, value: usize) {
+        let out = EvaluatedState::initial(value);
+        self.cache.insert(out.0, out.1);
+    }
+    pub fn find(&self, node: NodeID) -> &EvaluatedState {
+        match self.cache.get(&node) {
+            Some(s) => s,
+            None => &EvaluatedState::Failure(StopReason::NotFound),
+        }
+    }
+    pub fn rewrite(&self, node: NodeID) {
+        match self.find(node) {
+            EvaluatedState::Unevaluated => {}
+            EvaluatedState::Initial(_) => {}
+            EvaluatedState::Success(_) => {}
+            EvaluatedState::Failure(_) => {}
+        }
+    }
+}
+#[test]
+fn debug() {
+    let mut pool = ExpressionPool::default();
+    pool.initial(1);
+    pool.initial(2);
+    println!("{:?}", pool);
 }
 
 impl ExpressionTree {
@@ -74,88 +126,96 @@ impl ExpressionTree {
     }
     pub fn atomic_concat(&self) -> bool {
         match self {
-            ExpressionTree::Atomic { .. } => { true }
-            ExpressionTree::Concat { lhs, rhs } => {
-                lhs.atomic_concat() && rhs.atomic_concat()
-            }
+            ExpressionTree::Atomic { .. } => true,
+            ExpressionTree::Concat { lhs, rhs } => lhs.atomic_concat() && rhs.atomic_concat(),
             _ => false,
         }
     }
 }
 
 impl ExpressionTree {
-    pub fn eval(self) -> Result<IBig, StopReason> {
+    pub fn evaluate(&self) -> Result<IBig, StopReason> {
         let (num, den) = self.eval_nest()?.into_parts();
-        if !den.is_one() {
-            Err(StopReason::NotInteger)
-        } else {
-            Ok(num)
-        }
+        if !den.is_one() { Err(StopReason::NotInteger) } else { Ok(num) }
     }
-    fn eval_nest(self) -> Result<RBig, StopReason> {
+    fn eval_nest(&self) -> Result<RBig, StopReason> {
         match self {
-            ExpressionTree::Atomic { number } => {
-                Ok(number)
-            }
-            ExpressionTree::Add { lhs, rhs } => {
-                Ok(lhs.eval_nest()?.add(rhs.eval_nest()?))
-            }
-            ExpressionTree::Sub { lhs, rhs } => {
-                Ok(lhs.eval_nest()?.sub(rhs.eval_nest()?))
-            }
-            ExpressionTree::Mul { lhs, rhs } => {
-                Ok(lhs.eval_nest()?.mul(rhs.eval_nest()?))
-            }
-            ExpressionTree::Div { lhs, rhs } => {
-                Ok(lhs.eval_nest()?.div(rhs.eval_nest()?))
-            }
+            ExpressionTree::Atomic { number } => Ok(number.clone()),
+            ExpressionTree::Add { lhs, rhs } => Ok(lhs.eval_nest()?.add(rhs.eval_nest()?)),
+            ExpressionTree::Sub { lhs, rhs } => Ok(lhs.eval_nest()?.sub(rhs.eval_nest()?)),
+            ExpressionTree::Mul { lhs, rhs } => Ok(lhs.eval_nest()?.mul(rhs.eval_nest()?)),
+            ExpressionTree::Div { lhs, rhs } => Ok(lhs.eval_nest()?.div(rhs.eval_nest()?)),
             ExpressionTree::Concat { lhs, rhs } => {
                 if lhs.atomic_concat() && rhs.atomic_concat() {
                     Ok(lhs.eval_nest()?.mul(UBig::from(10usize)).add(rhs.eval_nest()?))
-                } else {
+                }
+                else {
                     Err(StopReason::NonAtomicConcat)
                 }
             }
         }
     }
 }
-
-pub fn build_add(lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree>, trees: &mut Vec<ExpressionTree>) {
-    trees.push(ExpressionTree::Add {
-        lhs: Rc::new(self.clone()),
-        rhs: Rc::new(rhs.clone()),
-    });
-    trees.push(ExpressionTree::Sub {
-        lhs: Rc::new(self.clone()),
-        rhs: Rc::new(rhs.clone()),
-    })
-}
-pub fn build_mul(lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree>, trees: &mut Vec<ExpressionTree>) {
-    trees.push(ExpressionTree::Mul {
-        lhs: Rc::new(self.clone()),
-        rhs: Rc::new(rhs.clone()),
-    });
-    trees.push(ExpressionTree::Div {
-        lhs: Rc::new(self.clone()),
-        rhs: Rc::new(rhs.clone()),
-    })
-}
-pub fn build_concat(lhs: Rc<ExpressionTree>, rhs: Rc<ExpressionTree>, trees: &mut Vec<ExpressionTree>) {
-    trees.push(ExpressionTree::Concat {
-        lhs: self.clone(),
-        rhs: rhs.clone(),
-    })
-}
-
-
-#[test]
-fn test() {
-    let mut expressions = vec![];
-    let lhs = ExpressionTree::from(1);
-    let rhs = ExpressionTree::from(2);
-    lhs.build_add(&rhs, &mut expressions);
-    lhs.build_concat(&rhs, &mut expressions);
-    for expr in expressions {
-        println!("{:?} => {:#?}", expr, expr.clone().eval().unwrap())
-    }
-}
+// pub struct ExpressionQuery {
+//     trees: Vec<i8>,
+// }
+//
+// impl ExpressionQuery {
+//     pub fn build_action(&mut self, action: &[usize]) -> ExpressionTree {
+//         assert!(self.trees.len() >= 2);
+//         let mut items = self.trees.iter().rev();
+//         let mut actions = action.iter();
+//         let mut lhs = items.next().unwrap();
+//         while let Some(rhs) = items.next() {
+//             match actions.next() {
+//                 Some(0) => {}
+//                 _ => break,
+//             }
+//         }
+//     }
+//
+//     pub fn build_add(&mut self, lhs: &Rc<ExpressionTree>, rhs: &Rc<ExpressionTree>) {
+//         self.trees.push(Rc::new(ExpressionTree::Add { lhs: lhs.clone(), rhs: rhs.clone() }));
+//         self.trees.push(Rc::new(ExpressionTree::Sub { lhs: rhs.clone(), rhs: lhs.clone() }));
+//     }
+//     pub fn build_mul(&mut self, lhs: &Rc<ExpressionTree>, rhs: &Rc<ExpressionTree>) {
+//         self.trees.push(Rc::new(ExpressionTree::Mul { lhs: lhs.clone(), rhs: rhs.clone() }));
+//         self.trees.push(Rc::new(ExpressionTree::Div { lhs: lhs.clone(), rhs: rhs.clone() }))
+//     }
+//     pub fn build_concat(&mut self, lhs: &Rc<ExpressionTree>, rhs: &Rc<ExpressionTree>) {
+//         self.trees.push(Rc::new(ExpressionTree::Concat { lhs: lhs.clone(), rhs: rhs.clone() }))
+//     }
+// }
+//
+// #[test]
+// fn test() {
+//     let mut items = vec![ExpressionTree::from(1), ExpressionTree::from(2)];
+//
+//     let mut items = items.into_iter().rev();
+//     let lhs = Rc::new(items.next()).unwrap();
+//     while let Some(rhs) = items.next() {}
+//
+//     let lhs = Rc::new(ExpressionTree::from(1));
+//     let mut expressions = vec![lhs];
+//     let rhs = Rc::new(ExpressionTree::from(2));
+//
+//     for lhs in expressions.clone().iter() {
+//         build_add(lhs, &rhs, &mut expressions);
+//         build_mul(lhs, &rhs, &mut expressions);
+//         build_concat(lhs, &rhs, &mut expressions);
+//     }
+//
+//     build_add(&lhs, &rhs, &mut expressions);
+//     build_concat(&lhs, &rhs, &mut expressions);
+//
+//     for expr in expressions {
+//         match expr.evaluate() {
+//             Ok(o) => {
+//                 println!("{:?} => {:#?}", expr, o)
+//             }
+//             Err(_) => {
+//                 continue;
+//             }
+//         }
+//     }
+// }
