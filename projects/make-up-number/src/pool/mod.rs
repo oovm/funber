@@ -4,8 +4,8 @@ use std::{
 };
 
 use ahash::RandomState;
-use dashmap::DashMap;
-use dashu::rational::RBig;
+use dashmap::{mapref::one::Ref, DashMap};
+use dashu::{integer::IBig, rational::RBig};
 
 use crate::{ExpressionNode, StopReason};
 
@@ -90,6 +90,9 @@ impl ExpressionPool {
                 lhs.div(rhs)
             }
             ExpressionNode::Concat { lhs, rhs } => {
+                if !node.expression.is_atomic_concat(self) {
+                    Err(StopReason::NonAtomicConcat)?;
+                }
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
                 lhs.mul(RBig::from(10)).add(rhs)
@@ -154,9 +157,26 @@ impl ExpressionPool {
                 self.rewrite(&rhs, w)?;
             }
             ExpressionNode::Mul { lhs, rhs } => {
-                self.rewrite(&lhs, w)?;
+                // if inner is add
+                match self.cache.get(&lhs).unwrap().expression {
+                    ExpressionNode::Add { .. } | ExpressionNode::Sub { .. } => {
+                        write!(w, "(")?;
+                        self.rewrite(&lhs, w)?;
+                        write!(w, ")")?;
+                    }
+                    _ => {
+                        self.rewrite(&lhs, w)?;
+                    }
+                }
                 write!(w, " * ")?;
-                self.rewrite(&rhs, w)?;
+                if let ExpressionNode::Add { .. } | ExpressionNode::Sub { .. } = self.cache.get(&rhs).unwrap().expression {
+                    write!(w, "(")?;
+                    self.rewrite(&rhs, w)?;
+                    write!(w, ")")?;
+                }
+                else {
+                    self.rewrite(&rhs, w)?;
+                }
             }
             ExpressionNode::Div { lhs, rhs } => {
                 self.rewrite(&lhs, w)?;
@@ -172,6 +192,27 @@ impl ExpressionPool {
     }
 }
 
+impl ExpressionNode {
+    pub fn is_atomic_concat(&self, pool: &ExpressionPool) -> bool {
+        match self {
+            ExpressionNode::Atomic { .. } => true,
+            ExpressionNode::Concat { lhs, rhs } => match (pool.cache.get(lhs), pool.cache.get(rhs)) {
+                (Some(lhs), Some(rhs)) => lhs.expression.is_atomic_concat(pool) && rhs.expression.is_atomic_concat(pool),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+pub fn evaluate(id: NodeID, pool: &mut ExpressionPool) -> Result<IBig, StopReason> {
+    let result = pool.evaluate(&id)?.into_parts();
+    if !result.1.is_one() {
+        Err(StopReason::NotInteger)?
+    }
+    Ok(result.0)
+}
+
 #[test]
 fn debug() {
     let mut pool = ExpressionPool::default();
@@ -180,6 +221,6 @@ fn debug() {
     let id = pool.expression(ExpressionNode::Add { lhs, rhs });
     let mut expression = String::new();
     pool.rewrite(&id, &mut expression).unwrap();
-    println!("{:#?}", pool.evaluate(&id));
+    println!("{:#?}", evaluate(id, &mut pool));
     println!("{:#?}", expression);
 }

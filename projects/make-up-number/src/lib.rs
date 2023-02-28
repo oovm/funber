@@ -11,22 +11,19 @@ use std::{
     str::FromStr,
 };
 
-use ahash::{AHashMap, AHasher};
-use dashu::{
-    base::UnsignedAbs,
-    integer::{IBig, UBig},
-    rational::RBig,
-};
+use ahash::AHasher;
+use dashu::{base::UnsignedAbs, integer::IBig, rational::RBig};
 use itertools::Itertools;
 
 use latexify::Latexify;
 
-pub use crate::errors::StopReason;
+pub use crate::{
+    errors::StopReason,
+    pool::{evaluate, ExpressionPool, NodeID},
+};
 
 mod errors;
 mod pool;
-
-pub use crate::pool::{ExpressionPool, NodeID};
 
 ///
 #[derive(Debug, Clone, Hash)]
@@ -49,13 +46,26 @@ pub enum ExpressionNode {
     Concat { lhs: NodeID, rhs: NodeID },
 }
 
+#[repr(usize)]
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum ExpressionAction {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Concat,
+pub enum ArithmeticAction {
+    Concat = 0,
+    Add = 1,
+    Sub = 2,
+    Mul = 3,
+    Div = 4,
+}
+
+impl Default for ArithmeticAction {
+    fn default() -> Self {
+        Self::Concat
+    }
+}
+
+impl From<usize> for ArithmeticAction {
+    fn from(value: usize) -> Self {
+        unsafe { std::mem::transmute(value) }
+    }
 }
 
 impl ExpressionNode {
@@ -66,14 +76,6 @@ impl ExpressionNode {
         hasher.finish() as usize
     }
 }
-
-// impl From<usize> for ExpressionNode {
-//     fn from(value: usize) -> Self {
-//         let mut hasher = AHasher::default();
-//         value.hash(&mut hasher);
-//         Self::Atomic { number: hasher.finish() as usize }
-//     }
-// }
 
 impl ExpressionTree {
     pub fn is_atom(&self) -> bool {
@@ -91,89 +93,42 @@ impl ExpressionTree {
     }
 }
 
-impl ExpressionTree {
-    pub fn evaluate(&self) -> Result<IBig, StopReason> {
-        let (num, den) = self.eval_nest()?.into_parts();
-        if !den.is_one() { Err(StopReason::NotInteger) } else { Ok(num) }
-    }
-    fn eval_nest(&self) -> Result<RBig, StopReason> {
-        match self {
-            ExpressionTree::Atomic { number } => Ok(number.clone()),
-            ExpressionTree::Add { lhs, rhs } => Ok(lhs.eval_nest()?.add(rhs.eval_nest()?)),
-            ExpressionTree::Sub { lhs, rhs } => Ok(lhs.eval_nest()?.sub(rhs.eval_nest()?)),
-            ExpressionTree::Mul { lhs, rhs } => Ok(lhs.eval_nest()?.mul(rhs.eval_nest()?)),
-            ExpressionTree::Div { lhs, rhs } => Ok(lhs.eval_nest()?.div(rhs.eval_nest()?)),
-            ExpressionTree::Concat { lhs, rhs } => {
-                if lhs.atomic_concat() && rhs.atomic_concat() {
-                    Ok(lhs.eval_nest()?.mul(UBig::from(10usize)).add(rhs.eval_nest()?))
-                }
-                else {
-                    Err(StopReason::NonAtomicConcat)
-                }
-            }
-        }
+pub struct ArithmeticTraverse {
+    initials: Vec<usize>,
+    pointer: usize,
+}
+
+impl ArithmeticTraverse {
+    pub fn new(initials: Vec<usize>) -> Self {
+        Self { initials, pointer: 0 }
     }
 }
-// pub struct ExpressionQuery {
-//     trees: Vec<i8>,
-// }
-//
-// impl ExpressionQuery {
-//     pub fn build_action(&mut self, action: &[usize]) -> ExpressionTree {
-//         assert!(self.trees.len() >= 2);
-//         let mut items = self.trees.iter().rev();
-//         let mut actions = action.iter();
-//         let mut lhs = items.next().unwrap();
-//         while let Some(rhs) = items.next() {
-//             match actions.next() {
-//                 Some(0) => {}
-//                 _ => break,
-//             }
-//         }
-//     }
-//
-//     pub fn build_add(&mut self, lhs: &Rc<ExpressionTree>, rhs: &Rc<ExpressionTree>) {
-//         self.trees.push(Rc::new(ExpressionTree::Add { lhs: lhs.clone(), rhs: rhs.clone() }));
-//         self.trees.push(Rc::new(ExpressionTree::Sub { lhs: rhs.clone(), rhs: lhs.clone() }));
-//     }
-//     pub fn build_mul(&mut self, lhs: &Rc<ExpressionTree>, rhs: &Rc<ExpressionTree>) {
-//         self.trees.push(Rc::new(ExpressionTree::Mul { lhs: lhs.clone(), rhs: rhs.clone() }));
-//         self.trees.push(Rc::new(ExpressionTree::Div { lhs: lhs.clone(), rhs: rhs.clone() }))
-//     }
-//     pub fn build_concat(&mut self, lhs: &Rc<ExpressionTree>, rhs: &Rc<ExpressionTree>) {
-//         self.trees.push(Rc::new(ExpressionTree::Concat { lhs: lhs.clone(), rhs: rhs.clone() }))
-//     }
-// }
-//
-// #[test]
-// fn test() {
-//     let mut items = vec![ExpressionTree::from(1), ExpressionTree::from(2)];
-//
-//     let mut items = items.into_iter().rev();
-//     let lhs = Rc::new(items.next()).unwrap();
-//     while let Some(rhs) = items.next() {}
-//
-//     let lhs = Rc::new(ExpressionTree::from(1));
-//     let mut expressions = vec![lhs];
-//     let rhs = Rc::new(ExpressionTree::from(2));
-//
-//     for lhs in expressions.clone().iter() {
-//         build_add(lhs, &rhs, &mut expressions);
-//         build_mul(lhs, &rhs, &mut expressions);
-//         build_concat(lhs, &rhs, &mut expressions);
-//     }
-//
-//     build_add(&lhs, &rhs, &mut expressions);
-//     build_concat(&lhs, &rhs, &mut expressions);
-//
-//     for expr in expressions {
-//         match expr.evaluate() {
-//             Ok(o) => {
-//                 println!("{:?} => {:#?}", expr, o)
-//             }
-//             Err(_) => {
-//                 continue;
-//             }
-//         }
-//     }
-// }
+pub struct ExpressionPlan {
+    pub first: usize,
+    pub items: Vec<(ArithmeticAction, usize)>,
+}
+
+impl Iterator for ArithmeticTraverse {
+    type Item = ExpressionPlan;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let actions = self.initials.len() - 1;
+        // actions <= log pointer / log 5
+        if self.pointer >= 5usize.pow(actions as u32) {
+            return None;
+        }
+        // base 10 pointer to base 5 vec
+        let mut actions = vec![ArithmeticAction::default(); actions];
+        let mut pointer = self.pointer;
+        for i in 0..actions.len() {
+            actions[i] = ArithmeticAction::from(pointer % 5);
+            pointer /= 5;
+        }
+        let plan = ExpressionPlan {
+            first: self.initials[0],
+            items: actions.into_iter().zip(self.initials[1..].iter().copied()).collect(),
+        };
+        self.pointer += 1;
+        Some(plan)
+    }
+}
