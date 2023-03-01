@@ -1,22 +1,16 @@
 #![feature(generators)]
 #![feature(generator_trait)]
 
-mod expression;
-mod operators;
 use std::{
-    fmt::Write,
+    fmt::{Debug, Formatter},
     hash::{Hash, Hasher},
-    io::Write as _,
-    ops::{Add, Div, Generator, Mul, Sub},
     rc::Rc,
-    str::FromStr,
 };
 
 use ahash::AHasher;
-use dashu::{base::UnsignedAbs, rational::RBig};
-use itertools::Itertools;
-
-use latexify::Latexify;
+use catalan::{FullBinaryTrees, OperatorPermutation};
+use dashu::{integer::IBig, rational::RBig};
+use gen_iter::GenIter;
 
 pub use crate::{
     errors::StopReason,
@@ -25,8 +19,62 @@ pub use crate::{
 };
 
 mod errors;
+mod expression;
+mod operators;
 mod pool;
 
+#[derive(Default)]
+pub struct ExpressionCache {
+    pool: ExpressionPool,
+    catalan: FullBinaryTrees,
+    values: Vec<usize>,
+    operators: Vec<ExpressionAction>,
+}
+
+impl Debug for ExpressionCache {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExpressionCache")
+            .field("pool", &self.pool)
+            .field("catalan", &self.catalan)
+            .field("values", &self.values)
+            .field("operators", &self.operators)
+            .finish()
+    }
+}
+
+impl ExpressionCache {
+    pub fn task(&mut self, values: Vec<usize>, operators: Vec<ExpressionAction>) {
+        self.values = values;
+        self.operators = operators;
+        self.catalan.build_trees(self.values.len());
+    }
+    pub fn sequence(&self) -> impl Iterator<Item = NodeID> + '_ {
+        GenIter(move || {
+            for tree in self.catalan.inquire(self.values.len()) {
+                for operator in OperatorPermutation::new(&self.operators, self.values.len() - 1) {
+                    yield self.pool.register_binary_node(&tree, self.values.clone(), operator);
+                }
+            }
+        })
+    }
+    pub fn run_expression(&self, id: NodeID) -> Result<IBig, StopReason> {
+        evaluate(id, &self.pool)
+    }
+    pub fn add_expression(&mut self, node: ExpressionNode) -> NodeID {
+        match node {
+            ExpressionNode::Atomic { number } => self.pool.insert_atomic(number),
+            ExpressionNode::Binary { lhs, rhs, action } => self.pool.insert_binary(action, lhs, rhs),
+        }
+    }
+    pub fn get_expression(&self, id: NodeID) -> Result<ExpressionNode, StopReason> {
+        self.pool.get_expression(&id)
+    }
+    pub fn get_display(&self, id: NodeID) -> String {
+        let mut buffer = String::new();
+        self.pool.rewrite(&id, &mut buffer).ok();
+        buffer
+    }
+}
 ///
 #[derive(Debug, Clone, Hash)]
 pub enum ExpressionTree {
@@ -41,7 +89,7 @@ pub enum ExpressionTree {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ExpressionNode {
     Atomic { number: NodeID },
-    Binary { lhs: NodeID, rhs: NodeID, action: ExpressionAction },
+    Binary { action: ExpressionAction, lhs: NodeID, rhs: NodeID },
 }
 
 impl ExpressionNode {
@@ -62,61 +110,5 @@ impl ExpressionNode {
                 ExpressionAction::Minus => 700,
             },
         }
-    }
-}
-
-impl ExpressionTree {
-    pub fn is_atom(&self) -> bool {
-        match self {
-            ExpressionTree::Atomic { .. } => true,
-            _ => false,
-        }
-    }
-    pub fn atomic_concat(&self) -> bool {
-        match self {
-            ExpressionTree::Atomic { .. } => true,
-            ExpressionTree::Concat { lhs, rhs } => lhs.atomic_concat() && rhs.atomic_concat(),
-            _ => false,
-        }
-    }
-}
-
-pub struct ArithmeticTraverse {
-    initials: Vec<usize>,
-    pointer: usize,
-}
-
-impl ArithmeticTraverse {
-    pub fn new(initials: Vec<usize>) -> Self {
-        Self { initials, pointer: 0 }
-    }
-}
-pub struct ExpressionPlan {
-    pub first: usize,
-    pub items: Vec<(ExpressionAction, usize)>,
-}
-
-impl Iterator for ArithmeticTraverse {
-    type Item = ExpressionPlan;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let actions = self.initials.len() - 1;
-        // actions <= log pointer / log 5
-        if self.pointer >= 5usize.pow(actions as u32) {
-            return None;
-        }
-        // base 10 pointer to base 5 vec
-        let mut actions = vec![ExpressionAction::default(); actions];
-        let mut pointer = self.pointer;
-        for i in 0..actions.len() {
-            actions[i] = ExpressionAction::from(pointer % 5);
-            pointer /= 5;
-        }
-        let plan = ExpressionPlan {
-            first: self.initials[0],
-            items: actions.into_iter().zip(self.initials[1..].iter().copied()).collect(),
-        };
-        self.pointer += 1;
-        Some(plan)
     }
 }

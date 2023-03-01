@@ -5,7 +5,7 @@ use crate::{ExpressionAction, ExpressionPool, NodeID};
 trait BinaryExt {
     fn register_expression(
         &self,
-        cache: &mut ExpressionPool,
+        cache: &ExpressionPool,
         values: &mut Vec<usize>,
         actions: &mut Vec<ExpressionAction>,
     ) -> NodeID;
@@ -13,7 +13,7 @@ trait BinaryExt {
 impl BinaryExt for BinaryNode {
     fn register_expression(
         &self,
-        cache: &mut ExpressionPool,
+        cache: &ExpressionPool,
         values: &mut Vec<usize>,
         actions: &mut Vec<ExpressionAction>,
     ) -> NodeID {
@@ -23,7 +23,7 @@ impl BinaryExt for BinaryNode {
                 cache.insert_atomic(atom)
             }
             BinaryNode::Binary { lhs, rhs } => {
-                let operator = actions[0].clone();
+                let operator = actions.remove(0);
                 let lhs = lhs.register_expression(cache, values, actions);
                 let rhs = rhs.register_expression(cache, values, actions);
                 cache.insert_binary(operator, lhs, rhs)
@@ -34,7 +34,7 @@ impl BinaryExt for BinaryNode {
 
 impl ExpressionPool {
     pub fn register_binary_node(
-        &mut self,
+        &self,
         node: &BinaryNode,
         mut values: Vec<usize>,
         mut actions: Vec<ExpressionAction>,

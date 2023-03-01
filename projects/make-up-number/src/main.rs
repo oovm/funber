@@ -1,40 +1,26 @@
-#![feature(generators)]
-
-use catalan::{FullBinaryTrees, OperatorPermutation};
-use gen_iter::GenIter;
-use itertools::Itertools;
-
-use make_up_number::{evaluate, ExpressionAction, ExpressionPool, NodeID};
-
-#[derive(Default)]
-pub struct ExpressionCache {
-    pool: ExpressionPool,
-    catalan: FullBinaryTrees,
-    values: Vec<usize>,
-    operators: Vec<ExpressionAction>,
-}
-
-impl ExpressionCache {
-    pub fn task(&mut self, values: Vec<usize>, operators: Vec<ExpressionAction>) -> Self {
-        Self { pool: ExpressionPool::default(), catalan: FullBinaryTrees::default(), values, operators }
-    }
-    pub fn build(&mut self) -> impl Iterator<Item = NodeID> + '_ {
-        GenIter(move || {
-            for tree in self.catalan.build_trees(self.values.len()) {
-                for operator in OperatorPermutation::new(&self.operators, self.values.len() - 1) {
-                    yield self.pool.register_binary_node(&tree, self.values.clone(), operator);
-                }
-            }
-        })
-    }
-}
+use dashu::integer::IBig;
+use make_up_number::{ExpressionAction, ExpressionCache};
 
 fn main() {
     // 3 items
     let mut cache = ExpressionCache::default();
-    let values = vec![1, 2, 3, 4];
-    let operators = vec![ExpressionAction::Plus, ExpressionAction::Minus, ExpressionAction::Divide];
-    for task in cache.task(values, operators).build() {
-        println!("{:?}", task);
+    let values = vec![1, 1, 4, 5, 1, 4];
+    let operators = vec![
+        ExpressionAction::Concat,
+        ExpressionAction::Plus,
+        ExpressionAction::Minus,
+        // ExpressionAction::Times,
+        // ExpressionAction::Divide,
+    ];
+    cache.task(values, operators);
+    for task in cache.sequence() {
+        match cache.run_expression(task) {
+            Ok(o) => {
+                if o.eq(&IBig::from(10usize)) {
+                    println!("{:#40} == {}", cache.get_display(task), o);
+                }
+            }
+            Err(_) => continue,
+        }
     }
 }

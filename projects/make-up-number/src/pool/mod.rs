@@ -18,7 +18,6 @@ pub struct ExpressionPool {
 
 #[derive(Clone)]
 pub struct EvaluatedState {
-    is_initial: bool,
     is_evaluated: bool,
     expression: ExpressionNode,
     result: RBig,
@@ -37,27 +36,9 @@ impl Debug for EvaluatedState {
     }
 }
 
-impl EvaluatedState {
-    pub fn initial(number: usize) -> EvaluatedState {
-        Self {
-            is_initial: true,
-            is_evaluated: true,
-            expression: ExpressionNode::Atomic { number },
-            result: RBig::from(number),
-            failure: None,
-        }
-    }
-    pub fn get_node_id(&self) -> NodeID {
-        self.expression.get_id()
-    }
-    pub fn get_priority(&self) -> usize {
-        self.expression.get_priority()
-    }
-}
-
 impl ExpressionPool {
-    pub fn evaluate(&mut self, node: &NodeID) -> Result<RBig, StopReason> {
-        let mut node = self.find(node)?;
+    pub fn evaluate(&self, node: &NodeID) -> Result<RBig, StopReason> {
+        let node = self.find(node)?;
         if node.is_evaluated {
             return Ok(node.result.clone());
         }
@@ -66,7 +47,7 @@ impl ExpressionPool {
             Err(e) => Err(self.update_failure(node, e)),
         }
     }
-    fn try_evaluate(&mut self, node: &EvaluatedState) -> Result<RBig, StopReason> {
+    fn try_evaluate(&self, node: &EvaluatedState) -> Result<RBig, StopReason> {
         let out = match &node.expression {
             ExpressionNode::Atomic { .. } => unreachable!("All atomic nodes should be evaluated"),
             ExpressionNode::Binary { lhs, rhs, action } => match action {
@@ -76,7 +57,7 @@ impl ExpressionPool {
                     }
                     let lhs = self.evaluate(lhs)?;
                     let rhs = self.evaluate(rhs)?;
-                    lhs.mul(RBig::from(10)).add(rhs)
+                    lhs.mul(IBig::from(10)).add(rhs)
                 }
                 ExpressionAction::Plus => {
                     let lhs = self.evaluate(lhs)?;
@@ -105,9 +86,8 @@ impl ExpressionPool {
         };
         Ok(out)
     }
-    pub fn insert_atomic(&mut self, number: usize) -> NodeID {
+    pub fn insert_atomic(&self, number: usize) -> NodeID {
         let out = EvaluatedState {
-            is_initial: true,
             is_evaluated: true,
             expression: ExpressionNode::Atomic { number },
             result: RBig::from(number),
@@ -115,9 +95,8 @@ impl ExpressionPool {
         };
         self.do_insert(out)
     }
-    pub fn insert_binary(&mut self, action: ExpressionAction, lhs: NodeID, rhs: NodeID) -> NodeID {
+    pub fn insert_binary(&self, action: ExpressionAction, lhs: NodeID, rhs: NodeID) -> NodeID {
         let out = EvaluatedState {
-            is_initial: false,
             is_evaluated: false,
             expression: ExpressionNode::Binary { lhs, rhs, action },
             result: RBig::default(),
@@ -125,27 +104,32 @@ impl ExpressionPool {
         };
         self.do_insert(out)
     }
-    fn do_insert(&mut self, node: EvaluatedState) -> NodeID {
-        let id = node.get_node_id();
+    fn do_insert(&self, node: EvaluatedState) -> NodeID {
+        let id = node.expression.get_id();
         match self.cache.get(&id) {
-            Some(s) if s.is_evaluated => return id,
+            Some(s) if s.is_evaluated => {
+                return id;
+            }
             _ => {}
         }
         self.cache.insert(id, node);
         id
     }
-
-    pub fn update_success(&mut self, mut state: EvaluatedState, result: RBig) -> RBig {
+    pub fn update_success(&self, mut state: EvaluatedState, result: RBig) -> RBig {
         state.is_evaluated = true;
         state.result = result.clone();
-        self.cache.insert(state.get_node_id(), state);
+        self.cache.insert(state.expression.get_id(), state);
         result
     }
-    pub fn update_failure(&mut self, mut state: EvaluatedState, reason: StopReason) -> StopReason {
+    pub fn update_failure(&self, mut state: EvaluatedState, reason: StopReason) -> StopReason {
         state.is_evaluated = true;
         state.failure = Some(reason.clone());
-        self.cache.insert(state.get_node_id(), state);
+        self.cache.insert(state.expression.get_id(), state);
         reason
+    }
+    pub fn get_expression(&self, node: &NodeID) -> Result<ExpressionNode, StopReason> {
+        let state = self.cache.get(node).ok_or(StopReason::NotFound)?;
+        Ok(state.expression.clone())
     }
     pub fn find(&self, node: &NodeID) -> Result<EvaluatedState, StopReason> {
         match self.cache.get(node) {
@@ -167,105 +151,78 @@ impl ExpressionPool {
                     self.rewrite(&lhs, w)?;
                     self.rewrite(&rhs, w)?;
                 }
-                ExpressionAction::Plus => {
-                    self.rewrite(&lhs, w)?;
-                    write!(w, " + ")?;
-                    self.rewrite(&rhs, w)?;
-                }
-                ExpressionAction::Minus => {
-                    self.rewrite(&lhs, w)?;
-                    write!(w, " - ")?;
-                    self.rewrite(&rhs, w)?;
-                }
-                ExpressionAction::Times => {
-                    if self.should_add_brackets(node, &lhs) {
-                        write!(w, "(")?;
-                        self.rewrite(&lhs, w)?;
-                        write!(w, ")")?;
-                    }
-                    else {
-                        self.rewrite(&lhs, w)?;
-                    }
-                    write!(w, " * ")?;
-                    if self.should_add_brackets(node, &rhs) {
-                        write!(w, "(")?;
-                        self.rewrite(&rhs, w)?;
-                        write!(w, ")")?;
-                    }
-                    else {
-                        self.rewrite(&rhs, w)?;
-                    }
-                }
-                ExpressionAction::Divide => {
-                    if self.should_add_brackets(node, &lhs) {
-                        write!(w, "(")?;
-                        self.rewrite(&lhs, w)?;
-                        write!(w, ")")?;
-                    }
-                    else {
-                        self.rewrite(&lhs, w)?;
-                    }
-                    write!(w, " / ")?;
-                    if self.should_add_brackets(node, &rhs) {
-                        write!(w, "(")?;
-                        self.rewrite(&rhs, w)?;
-                        write!(w, ")")?;
-                    }
-                    else {
-                        self.rewrite(&rhs, w)?;
-                    }
-                }
+                ExpressionAction::Plus => self.write_brackets(node, lhs, rhs, " + ", w)?,
+                ExpressionAction::Minus => self.write_brackets(node, lhs, rhs, " - ", w)?,
+                ExpressionAction::Times => self.write_brackets(node, lhs, rhs, " * ", w)?,
+                ExpressionAction::Divide => self.write_brackets(node, lhs, rhs, " / ", w)?,
             },
         }
         Ok(())
     }
-    fn should_add_brackets(&self, node: &NodeID, parent: &NodeID) -> bool {
-        let node = match self.cache.get(node) {
-            Some(s) => s.get_priority(),
-            None => return true,
-        };
-        let parent = match self.cache.get(parent) {
-            Some(s) => s.get_priority(),
-            None => return true,
-        };
-        node < parent
+    fn write_brackets<W: Write>(
+        &self,
+        node: &NodeID,
+        lhs: NodeID,
+        rhs: NodeID,
+        join: &str,
+        w: &mut W,
+    ) -> Result<(), StopReason> {
+        if self.should_add_brackets(&lhs, node).unwrap_or(true) {
+            write!(w, "(")?;
+            self.rewrite(&lhs, w)?;
+            write!(w, ")")?;
+        }
+        else {
+            self.rewrite(&lhs, w)?;
+        }
+        w.write_str(join)?;
+        if self.should_add_brackets(&rhs, node).unwrap_or(true) {
+            write!(w, "(")?;
+            self.rewrite(&rhs, w)?;
+            write!(w, ")")?;
+        }
+        else {
+            self.rewrite(&rhs, w)?;
+        }
+        Ok(())
+    }
+
+    fn should_add_brackets(&self, child: &NodeID, parent: &NodeID) -> Option<bool> {
+        let child = self.cache.get(child)?.expression;
+        let parent = self.cache.get(parent)?.expression;
+        // if child.is_atomic_concat(self) {
+        //     return Some(false);
+        // }
+        Some(child.get_priority() <= parent.get_priority())
     }
 }
 
 impl ExpressionNode {
+    pub fn is_atomic(&self) -> bool {
+        match self {
+            ExpressionNode::Atomic { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn is_atomic_concat(&self, pool: &ExpressionPool) -> bool {
         match self {
             ExpressionNode::Atomic { .. } => true,
-            ExpressionNode::Binary { lhs, rhs, action } => match (pool.cache.get(lhs), pool.cache.get(rhs)) {
-                (Some(lhs), Some(rhs)) => lhs.expression.is_atomic_concat(pool) && rhs.expression.is_atomic_concat(pool),
+            ExpressionNode::Binary { action, lhs, rhs } => match action {
+                ExpressionAction::Concat => match (pool.cache.get(lhs), pool.cache.get(rhs)) {
+                    (Some(lhs), Some(rhs)) => lhs.expression.is_atomic_concat(pool) && rhs.expression.is_atomic_concat(pool),
+                    _ => false,
+                },
                 _ => false,
             },
-            _ => false,
         }
     }
 }
 
-pub fn evaluate(id: NodeID, pool: &mut ExpressionPool) -> Result<IBig, StopReason> {
+pub fn evaluate(id: NodeID, pool: &ExpressionPool) -> Result<IBig, StopReason> {
     let result = pool.evaluate(&id)?.into_parts();
     if !result.1.is_one() {
         Err(StopReason::NotInteger)?
     }
     Ok(result.0)
-}
-
-#[test]
-fn debug() {
-    let mut pool = ExpressionPool::default();
-    let lhs = pool.insert_atomic(1);
-    let rhs = pool.insert_atomic(2);
-    let id = pool.insert_binary(ExpressionNode::Add { lhs, rhs });
-    let mut expression = String::new();
-    pool.rewrite(&id, &mut expression).unwrap();
-    println!("{:#?}", evaluate(id, &mut pool));
-    println!("{:#?}", expression);
-}
-
-#[test]
-fn debug2() {
-    println!("{:#?}", RBig::from(3).div(RBig::from(4)).div(RBig::from(5)));
 }
