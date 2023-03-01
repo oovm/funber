@@ -41,7 +41,7 @@ impl Iterator for Arrangement {
 fn main() {
     // 3 items
     let mut cache = FullBinaryTrees::default();
-    let operators = Arrangement::new(vec![ExpressionAction::Add, ExpressionAction::Sub, ExpressionAction::Div]);
+    let operators = Arrangement::new(vec![ExpressionAction::Plus, ExpressionAction::Minus, ExpressionAction::Divide]);
     for arrange in operators {
         println!("{:?}", arrange)
     }
@@ -55,7 +55,7 @@ fn main() {
                 ExpressionNode::Binary {
                     lhs: Box::new(ExpressionNode::Atomic { number: 0 }),
                     rhs: Box::new(ExpressionNode::Atomic { number: 0 }),
-                    action: ExpressionAction::Add,
+                    action: ExpressionAction::Plus,
                 };
             }
         }

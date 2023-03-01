@@ -11,7 +11,6 @@ use std::{
 };
 
 use ahash::AHasher;
-use catalan::FullBinaryTrees;
 use dashu::{base::UnsignedAbs, rational::RBig};
 use itertools::Itertools;
 
@@ -42,14 +41,29 @@ pub enum ExpressionNode {
     Binary { lhs: NodeID, rhs: NodeID, action: ExpressionAction },
 }
 
+impl ExpressionNode {
+    pub fn get_priority(&self) -> usize {
+        match self {
+            ExpressionNode::Atomic { .. } => 1000,
+            ExpressionNode::Binary { action, .. } => match action {
+                ExpressionAction::Concat => 900,
+                ExpressionAction::Times => 800,
+                ExpressionAction::Divide => 800,
+                ExpressionAction::Plus => 700,
+                ExpressionAction::Minus => 700,
+            },
+        }
+    }
+}
+
 #[repr(usize)]
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ExpressionAction {
     Concat = 0,
-    Add = 1,
-    Sub = 2,
-    Mul = 3,
-    Div = 4,
+    Plus = 1,
+    Minus = 2,
+    Times = 3,
+    Divide = 4,
 }
 
 impl Default for ExpressionAction {

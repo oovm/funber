@@ -4,10 +4,10 @@ use std::{
 };
 
 use ahash::RandomState;
-use dashmap::{mapref::one::Ref, DashMap};
+use dashmap::DashMap;
 use dashu::{integer::IBig, rational::RBig};
 
-use crate::{ExpressionNode, StopReason};
+use crate::{ExpressionAction, ExpressionNode, StopReason};
 
 pub type NodeID = usize;
 
@@ -50,6 +50,9 @@ impl EvaluatedState {
     pub fn get_node_id(&self) -> NodeID {
         self.expression.get_id()
     }
+    pub fn get_priority(&self) -> usize {
+        self.expression.get_priority()
+    }
 }
 
 impl ExpressionPool {
@@ -66,37 +69,39 @@ impl ExpressionPool {
     fn try_evaluate(&mut self, node: &EvaluatedState) -> Result<RBig, StopReason> {
         let out = match &node.expression {
             ExpressionNode::Atomic { .. } => unreachable!("All atomic nodes should be evaluated"),
-            ExpressionNode::Add { lhs, rhs } => {
-                let lhs = self.evaluate(lhs)?;
-                let rhs = self.evaluate(rhs)?;
-                lhs.add(rhs)
-            }
-            ExpressionNode::Sub { lhs, rhs } => {
-                let lhs = self.evaluate(lhs)?;
-                let rhs = self.evaluate(rhs)?;
-                lhs.sub(rhs)
-            }
-            ExpressionNode::Mul { lhs, rhs } => {
-                let lhs = self.evaluate(lhs)?;
-                let rhs = self.evaluate(rhs)?;
-                lhs.mul(rhs)
-            }
-            ExpressionNode::Div { lhs, rhs } => {
-                let lhs = self.evaluate(lhs)?;
-                let rhs = self.evaluate(rhs)?;
-                if rhs.is_zero() {
-                    return Err(StopReason::DividedByZero);
+            ExpressionNode::Binary { lhs, rhs, action } => match action {
+                ExpressionAction::Concat => {
+                    if !node.expression.is_atomic_concat(self) {
+                        Err(StopReason::NonAtomicConcat)?;
+                    }
+                    let lhs = self.evaluate(lhs)?;
+                    let rhs = self.evaluate(rhs)?;
+                    lhs.mul(RBig::from(10)).add(rhs)
                 }
-                lhs.div(rhs)
-            }
-            ExpressionNode::Concat { lhs, rhs } => {
-                if !node.expression.is_atomic_concat(self) {
-                    Err(StopReason::NonAtomicConcat)?;
+                ExpressionAction::Plus => {
+                    let lhs = self.evaluate(lhs)?;
+                    let rhs = self.evaluate(rhs)?;
+                    lhs.add(rhs)
                 }
-                let lhs = self.evaluate(lhs)?;
-                let rhs = self.evaluate(rhs)?;
-                lhs.mul(RBig::from(10)).add(rhs)
-            }
+                ExpressionAction::Minus => {
+                    let lhs = self.evaluate(lhs)?;
+                    let rhs = self.evaluate(rhs)?;
+                    lhs.sub(rhs)
+                }
+                ExpressionAction::Times => {
+                    let lhs = self.evaluate(lhs)?;
+                    let rhs = self.evaluate(rhs)?;
+                    lhs.mul(rhs)
+                }
+                ExpressionAction::Divide => {
+                    let lhs = self.evaluate(lhs)?;
+                    let rhs = self.evaluate(rhs)?;
+                    if rhs.is_zero() {
+                        return Err(StopReason::DividedByZero);
+                    }
+                    lhs.div(rhs)
+                }
+            },
         };
         Ok(out)
     }
@@ -141,54 +146,78 @@ impl ExpressionPool {
         }
     }
     pub fn rewrite<W: Write>(&self, node: &NodeID, w: &mut W) -> Result<(), StopReason> {
-        let node = self.cache.get(node).ok_or(StopReason::NotFound)?;
-        match node.expression {
+        let state = self.cache.get(node).ok_or(StopReason::NotFound)?;
+        match state.expression {
             ExpressionNode::Atomic { number } => {
                 write!(w, "{}", number)?;
             }
-            ExpressionNode::Add { lhs, rhs } => {
-                self.rewrite(&lhs, w)?;
-                write!(w, " + ")?;
-                self.rewrite(&rhs, w)?;
-            }
-            ExpressionNode::Sub { lhs, rhs } => {
-                self.rewrite(&lhs, w)?;
-                write!(w, " - ")?;
-                self.rewrite(&rhs, w)?;
-            }
-            ExpressionNode::Mul { lhs, rhs } => {
-                // if inner is add
-                match self.cache.get(&lhs).unwrap().expression {
-                    ExpressionNode::Add { .. } | ExpressionNode::Sub { .. } => {
+            ExpressionNode::Binary { lhs, rhs, action } => match action {
+                ExpressionAction::Concat => {
+                    self.rewrite(&lhs, w)?;
+                    self.rewrite(&rhs, w)?;
+                }
+                ExpressionAction::Plus => {
+                    self.rewrite(&lhs, w)?;
+                    write!(w, " + ")?;
+                    self.rewrite(&rhs, w)?;
+                }
+                ExpressionAction::Minus => {
+                    self.rewrite(&lhs, w)?;
+                    write!(w, " - ")?;
+                    self.rewrite(&rhs, w)?;
+                }
+                ExpressionAction::Times => {
+                    if self.should_add_brackets(node, &lhs) {
                         write!(w, "(")?;
                         self.rewrite(&lhs, w)?;
                         write!(w, ")")?;
                     }
-                    _ => {
+                    else {
                         self.rewrite(&lhs, w)?;
                     }
+                    write!(w, " * ")?;
+                    if self.should_add_brackets(node, &rhs) {
+                        write!(w, "(")?;
+                        self.rewrite(&rhs, w)?;
+                        write!(w, ")")?;
+                    }
+                    else {
+                        self.rewrite(&rhs, w)?;
+                    }
                 }
-                write!(w, " * ")?;
-                if let ExpressionNode::Add { .. } | ExpressionNode::Sub { .. } = self.cache.get(&rhs).unwrap().expression {
-                    write!(w, "(")?;
-                    self.rewrite(&rhs, w)?;
-                    write!(w, ")")?;
+                ExpressionAction::Divide => {
+                    if self.should_add_brackets(node, &lhs) {
+                        write!(w, "(")?;
+                        self.rewrite(&lhs, w)?;
+                        write!(w, ")")?;
+                    }
+                    else {
+                        self.rewrite(&lhs, w)?;
+                    }
+                    write!(w, " / ")?;
+                    if self.should_add_brackets(node, &rhs) {
+                        write!(w, "(")?;
+                        self.rewrite(&rhs, w)?;
+                        write!(w, ")")?;
+                    }
+                    else {
+                        self.rewrite(&rhs, w)?;
+                    }
                 }
-                else {
-                    self.rewrite(&rhs, w)?;
-                }
-            }
-            ExpressionNode::Div { lhs, rhs } => {
-                self.rewrite(&lhs, w)?;
-                write!(w, " / ")?;
-                self.rewrite(&rhs, w)?;
-            }
-            ExpressionNode::Concat { lhs, rhs } => {
-                self.rewrite(&lhs, w)?;
-                self.rewrite(&rhs, w)?;
-            }
+            },
         }
         Ok(())
+    }
+    fn should_add_brackets(&self, node: &NodeID, parent: &NodeID) -> bool {
+        let node = match self.cache.get(node) {
+            Some(s) => s.get_priority(),
+            None => return true,
+        };
+        let parent = match self.cache.get(parent) {
+            Some(s) => s.get_priority(),
+            None => return true,
+        };
+        node < parent
     }
 }
 
