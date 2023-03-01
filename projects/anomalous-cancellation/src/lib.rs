@@ -4,9 +4,7 @@
 use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter, Write},
-    fs::File,
     io::Write as _,
-    ops::Generator,
     str::FromStr,
 };
 
@@ -79,8 +77,8 @@ fn digit_cancellation(numerator: &UBig, denominator: &UBig) -> Result<Cancellati
         }
     }
 
-    let mut n_rest = n_digits.iter().map(|(_, c)| c).collect::<String>();
-    let mut d_rest = d_digits.iter().map(|(_, c)| c).collect::<String>();
+    let n_rest = n_digits.iter().map(|(_, c)| c).collect::<String>();
+    let d_rest = d_digits.iter().map(|(_, c)| c).collect::<String>();
     if n_rest.is_empty() || d_rest.is_empty() {
         Err("All digits are cancelled")?
     }

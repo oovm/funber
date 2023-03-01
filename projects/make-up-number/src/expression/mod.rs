@@ -33,5 +33,12 @@ impl BinaryExt for BinaryNode {
 }
 
 impl ExpressionPool {
-    pub fn insert_binary_node(&mut self, node)
+    pub fn register_binary_node(
+        &mut self,
+        node: &BinaryNode,
+        mut values: Vec<usize>,
+        mut actions: Vec<ExpressionAction>,
+    ) -> NodeID {
+        node.register_expression(self, &mut values, &mut actions)
+    }
 }
