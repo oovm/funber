@@ -1,6 +1,8 @@
 #![feature(generators)]
 #![feature(generator_trait)]
 
+mod expression;
+
 use std::{
     fmt::Write,
     hash::{Hash, Hasher},
@@ -42,6 +44,12 @@ pub enum ExpressionNode {
 }
 
 impl ExpressionNode {
+    #[inline]
+    pub fn get_id(&self) -> NodeID {
+        let mut hasher = AHasher::default();
+        self.hash(&mut hasher);
+        hasher.finish() as usize
+    }
     pub fn get_priority(&self) -> usize {
         match self {
             ExpressionNode::Atomic { .. } => 1000,
@@ -75,15 +83,6 @@ impl Default for ExpressionAction {
 impl From<usize> for ExpressionAction {
     fn from(value: usize) -> Self {
         unsafe { std::mem::transmute(value) }
-    }
-}
-
-impl ExpressionNode {
-    #[inline]
-    pub fn get_id(&self) -> NodeID {
-        let mut hasher = AHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish() as usize
     }
 }
 

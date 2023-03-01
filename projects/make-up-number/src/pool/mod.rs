@@ -105,25 +105,36 @@ impl ExpressionPool {
         };
         Ok(out)
     }
-    pub fn initial(&mut self, value: usize) -> NodeID {
-        let out = EvaluatedState::initial(value);
-        let id = out.get_node_id();
-        self.cache.insert(id, out);
-        id
-    }
-    pub fn expression(&mut self, node: ExpressionNode) -> NodeID {
+    pub fn insert_atomic(&mut self, number: usize) -> NodeID {
         let out = EvaluatedState {
-            //
+            is_initial: true,
+            is_evaluated: true,
+            expression: ExpressionNode::Atomic { number },
+            result: RBig::from(number),
+            failure: None,
+        };
+        self.do_insert(out)
+    }
+    pub fn insert_binary(&mut self, action: ExpressionAction, lhs: NodeID, rhs: NodeID) -> NodeID {
+        let out = EvaluatedState {
             is_initial: false,
             is_evaluated: false,
-            expression: node,
+            expression: ExpressionNode::Binary { lhs, rhs, action },
             result: RBig::default(),
             failure: None,
         };
-        let id = out.get_node_id();
-        self.cache.insert(id, out);
+        self.do_insert(out)
+    }
+    fn do_insert(&mut self, node: EvaluatedState) -> NodeID {
+        let id = node.get_node_id();
+        match self.cache.get(&id) {
+            Some(s) if s.is_evaluated => return id,
+            _ => {}
+        }
+        self.cache.insert(id, node);
         id
     }
+
     pub fn update_success(&mut self, mut state: EvaluatedState, result: RBig) -> RBig {
         state.is_evaluated = true;
         state.result = result.clone();
@@ -225,7 +236,7 @@ impl ExpressionNode {
     pub fn is_atomic_concat(&self, pool: &ExpressionPool) -> bool {
         match self {
             ExpressionNode::Atomic { .. } => true,
-            ExpressionNode::Concat { lhs, rhs } => match (pool.cache.get(lhs), pool.cache.get(rhs)) {
+            ExpressionNode::Binary { lhs, rhs, action } => match (pool.cache.get(lhs), pool.cache.get(rhs)) {
                 (Some(lhs), Some(rhs)) => lhs.expression.is_atomic_concat(pool) && rhs.expression.is_atomic_concat(pool),
                 _ => false,
             },
@@ -245,9 +256,9 @@ pub fn evaluate(id: NodeID, pool: &mut ExpressionPool) -> Result<IBig, StopReaso
 #[test]
 fn debug() {
     let mut pool = ExpressionPool::default();
-    let lhs = pool.initial(1);
-    let rhs = pool.initial(2);
-    let id = pool.expression(ExpressionNode::Add { lhs, rhs });
+    let lhs = pool.insert_atomic(1);
+    let rhs = pool.insert_atomic(2);
+    let id = pool.insert_binary(ExpressionNode::Add { lhs, rhs });
     let mut expression = String::new();
     pool.rewrite(&id, &mut expression).unwrap();
     println!("{:#?}", evaluate(id, &mut pool));
