@@ -1,4 +1,4 @@
-use core::fmt::{Debug, Write};
+use core::fmt::Write;
 
 mod for_3rd;
 mod for_std;

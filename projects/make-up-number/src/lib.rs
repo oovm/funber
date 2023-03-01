@@ -1,9 +1,8 @@
 #![feature(generators)]
 #![feature(generator_trait)]
-#![feature(box_syntax)]
 
 use std::{
-    fmt::{Display, Write},
+    fmt::Write,
     hash::{Hash, Hasher},
     io::Write as _,
     ops::{Add, Div, Generator, Mul, Sub},
@@ -12,7 +11,8 @@ use std::{
 };
 
 use ahash::AHasher;
-use dashu::{base::UnsignedAbs, integer::IBig, rational::RBig};
+use catalan::FullBinaryTrees;
+use dashu::{base::UnsignedAbs, rational::RBig};
 use itertools::Itertools;
 
 use latexify::Latexify;
@@ -39,16 +39,12 @@ pub enum ExpressionTree {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ExpressionNode {
     Atomic { number: NodeID },
-    Add { lhs: NodeID, rhs: NodeID },
-    Sub { lhs: NodeID, rhs: NodeID },
-    Mul { lhs: NodeID, rhs: NodeID },
-    Div { lhs: NodeID, rhs: NodeID },
-    Concat { lhs: NodeID, rhs: NodeID },
+    Binary { lhs: NodeID, rhs: NodeID, action: ExpressionAction },
 }
 
 #[repr(usize)]
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum ArithmeticAction {
+pub enum ExpressionAction {
     Concat = 0,
     Add = 1,
     Sub = 2,
@@ -56,13 +52,13 @@ pub enum ArithmeticAction {
     Div = 4,
 }
 
-impl Default for ArithmeticAction {
+impl Default for ExpressionAction {
     fn default() -> Self {
         Self::Concat
     }
 }
 
-impl From<usize> for ArithmeticAction {
+impl From<usize> for ExpressionAction {
     fn from(value: usize) -> Self {
         unsafe { std::mem::transmute(value) }
     }
@@ -105,7 +101,7 @@ impl ArithmeticTraverse {
 }
 pub struct ExpressionPlan {
     pub first: usize,
-    pub items: Vec<(ArithmeticAction, usize)>,
+    pub items: Vec<(ExpressionAction, usize)>,
 }
 
 impl Iterator for ArithmeticTraverse {
@@ -118,10 +114,10 @@ impl Iterator for ArithmeticTraverse {
             return None;
         }
         // base 10 pointer to base 5 vec
-        let mut actions = vec![ArithmeticAction::default(); actions];
+        let mut actions = vec![ExpressionAction::default(); actions];
         let mut pointer = self.pointer;
         for i in 0..actions.len() {
-            actions[i] = ArithmeticAction::from(pointer % 5);
+            actions[i] = ExpressionAction::from(pointer % 5);
             pointer /= 5;
         }
         let plan = ExpressionPlan {

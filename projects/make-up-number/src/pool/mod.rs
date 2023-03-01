@@ -224,3 +224,8 @@ fn debug() {
     println!("{:#?}", evaluate(id, &mut pool));
     println!("{:#?}", expression);
 }
+
+#[test]
+fn debug2() {
+    println!("{:#?}", RBig::from(3).div(RBig::from(4)).div(RBig::from(5)));
+}
